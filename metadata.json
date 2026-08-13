@@ -1,0 +1,6 @@
+{
+  "name": "CourtVision Fantasy Basketball",
+  "description": "Real-time fantasy basketball app featuring live NBA game feeds, multi-user draft room, customizable scoring system, live play-by-play scoring updates, and weekly group leaderboards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
