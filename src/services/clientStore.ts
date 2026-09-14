@@ -1,10 +1,12 @@
-import { INITIAL_NBA_PLAYERS, DEFAULT_SCORING_RULES, calculateFantasyPoints } from '../data/nbaPlayers';
+import { INITIAL_NBA_PLAYERS, DEFAULT_SCORING_RULES, calculateFantasyPoints, enforceAuthenticTeam } from '../data/nbaPlayers';
 import { League, GroupMember, DraftPick, PlayByPlayAction, LiveGame, Player, ScoringRules } from '../types';
 
 const STORAGE_KEY_PLAYERS = 'cv_players';
 const STORAGE_KEY_LEAGUES = 'cv_leagues';
 const STORAGE_KEY_GAMES = 'cv_games';
 const STORAGE_KEY_SIM_MODE = 'cv_sim_mode';
+const CURRENT_ROSTER_VERSION = 'cv_v8_espn_official_stats';
+const STORAGE_KEY_ROSTER_VERSION = 'cv_roster_version';
 
 function createDefaultLeague(): League {
   const defaultMembers: GroupMember[] = [
@@ -77,20 +79,37 @@ export class ClientStore {
   // Players
   public static getPlayers(): Player[] {
     try {
+      const version = localStorage.getItem(STORAGE_KEY_ROSTER_VERSION);
+      if (version !== CURRENT_ROSTER_VERSION) {
+        localStorage.removeItem(STORAGE_KEY_PLAYERS);
+        localStorage.setItem(STORAGE_KEY_ROSTER_VERSION, CURRENT_ROSTER_VERSION);
+        const fresh = INITIAL_NBA_PLAYERS.map(enforceAuthenticTeam);
+        this.savePlayers(fresh);
+        return fresh;
+      }
+
       const stored = localStorage.getItem(STORAGE_KEY_PLAYERS);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length >= 100) {
+          // Always sanitize and enforce authentic real-world teams
+          const sanitized = parsed.map(enforceAuthenticTeam);
+          return sanitized;
+        }
       }
     } catch (e) {
       console.warn('Error reading stored players:', e);
     }
-    return [...INITIAL_NBA_PLAYERS];
+    const fresh = INITIAL_NBA_PLAYERS.map(enforceAuthenticTeam);
+    this.savePlayers(fresh);
+    return fresh;
   }
 
   public static savePlayers(players: Player[]) {
     try {
-      localStorage.setItem(STORAGE_KEY_PLAYERS, JSON.stringify(players));
+      const sanitized = players.map(enforceAuthenticTeam);
+      localStorage.setItem(STORAGE_KEY_PLAYERS, JSON.stringify(sanitized));
+      localStorage.setItem(STORAGE_KEY_ROSTER_VERSION, CURRENT_ROSTER_VERSION);
     } catch (e) {
       console.warn('Error saving players to localStorage:', e);
     }
@@ -472,16 +491,20 @@ export class ClientStore {
       fetchedGames = this.getGames();
     }
 
-    // 2. Fetch top team rosters from ESPN API
+    // Ensure we start with full authentic roster
+    if (currentPlayers.length < INITIAL_NBA_PLAYERS.length) {
+      currentPlayers = [...INITIAL_NBA_PLAYERS];
+    }
+
+    // 2. Fetch team rosters from ESPN API to update live headshots
     try {
-      const teamsRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams?limit=30');
+      const teamsRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams?limit=35');
       if (teamsRes.ok) {
         const teamsData = await teamsRes.json();
         const teams = teamsData.sports?.[0]?.leagues?.[0]?.teams || [];
 
-        // Fetch first 8 teams to keep client network load fast
-        const sampleTeams = teams.slice(0, 8);
-        const rosterPromises = sampleTeams.map(async (tObj: any) => {
+        // Check teams with concurrency
+        const rosterPromises = teams.map(async (tObj: any) => {
           try {
             const rRes = await fetch(`https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${tObj.team.id}?enable=roster`);
             if (!rRes.ok) return [];
@@ -489,10 +512,7 @@ export class ClientStore {
             return (rData.team?.athletes || []).map((a: any) => ({
               id: a.id,
               name: a.displayName || a.fullName,
-              team: tObj.team.abbreviation,
-              teamName: tObj.team.displayName,
-              pos: a.position?.abbreviation || 'G',
-              headshot: a.headshot?.href,
+              headshot: a.headshot?.href || `https://a.espncdn.com/i/headshots/nba/players/full/${a.id}.png`,
             }));
           } catch {
             return [];
@@ -501,19 +521,17 @@ export class ClientStore {
 
         const rosters = (await Promise.all(rosterPromises)).flat();
         if (rosters.length > 0) {
-          // Update matching existing players
+          // Strictly match by exact name to prevent scrambling players with similar names
           currentPlayers = currentPlayers.map((p) => {
-            const pNorm = p.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            const pNorm = p.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
             const match = rosters.find((r: any) => {
-              const rNorm = r.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-              return rNorm === pNorm || rNorm.includes(pNorm) || pNorm.includes(rNorm);
+              const rNorm = (r.name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+              return rNorm === pNorm;
             });
-            if (match) {
+            if (match && match.headshot) {
               return {
                 ...p,
-                team: match.team || p.team,
-                teamName: match.teamName || p.teamName,
-                avatarUrl: match.headshot || p.avatarUrl,
+                avatarUrl: match.headshot,
               };
             }
             return p;
@@ -521,7 +539,7 @@ export class ClientStore {
         }
       }
     } catch (e) {
-      console.warn('Direct ESPN team rosters sync failed, using existing roster:', e);
+      console.warn('Direct ESPN team rosters sync failed, using verified roster:', e);
     }
 
     // Link player stats into live games

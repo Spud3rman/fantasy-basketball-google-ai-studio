@@ -3,7 +3,7 @@ import http from 'http';
 import path from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI } from '@google/genai';
-import { INITIAL_NBA_PLAYERS, DEFAULT_SCORING_RULES, calculateFantasyPoints } from './src/data/nbaPlayers.js';
+import { INITIAL_NBA_PLAYERS, DEFAULT_SCORING_RULES, calculateFantasyPoints, enforceAuthenticTeam } from './src/data/nbaPlayers.js';
 import { League, GroupMember, DraftPick, PlayByPlayAction, LiveGame, Player, ScoringRules } from './src/types/index.js';
 
 const app = express();
@@ -22,7 +22,7 @@ if (process.env.GEMINI_API_KEY) {
 }
 
 // In-Memory Data Store (Persisted or reset per session)
-let playersList: Player[] = [...INITIAL_NBA_PLAYERS];
+let playersList: Player[] = [...INITIAL_NBA_PLAYERS].map(enforceAuthenticTeam);
 
 // Live NBA Games
 let liveGames: LiveGame[] = [];
@@ -85,13 +85,23 @@ async function syncRealNbaData(): Promise<{ syncedPlayersCount: number; syncedGa
 
     const teamIds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
 
+    const standardAbbrMap: Record<string, string> = {
+      SA: 'SAS',
+      GS: 'GSW',
+      WSH: 'WAS',
+      NY: 'NYK',
+      NO: 'NOP',
+      UTAH: 'UTA',
+    };
+
     // Fetch all 30 team rosters concurrently
     const teamPromises = teamIds.map(async (tid) => {
       try {
         const tRes = await fetch(`https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${tid}?enable=roster`);
         if (!tRes.ok) return [];
         const tData = await tRes.json();
-        const teamAbbr = tData.team?.abbreviation || 'NBA';
+        const rawAbbr = tData.team?.abbreviation || 'NBA';
+        const teamAbbr = standardAbbrMap[rawAbbr] || rawAbbr;
         const teamName = tData.team?.displayName || 'NBA Team';
         const athletes = tData.team?.athletes || [];
 
@@ -121,30 +131,90 @@ async function syncRealNbaData(): Promise<{ syncedPlayersCount: number; syncedGa
       const chunk = rawAthletes.slice(i, i + batchSize);
       const chunkResults = await Promise.all(
         chunk.map(async (a) => {
-          let pts = 10.5;
-          let reb = 3.8;
-          let ast = 2.4;
-          let stl = 0.8;
-          let blk = 0.5;
-          let fg3m = 1.2;
-          let to = 1.3;
+          let pts = 0;
+          let reb = 0;
+          let ast = 0;
+          let stl = 0;
+          let blk = 0;
+          let fg3m = 0;
+          let to = 0;
+          let hasStats = false;
 
+          // 1. Try ESPN Core Statistics (includes official PPG, RPG, APG, SPG, BPG, 3PM, TOPG)
           try {
-            const aRes = await fetch(`https://site.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/${a.id}`);
-            if (aRes.ok) {
-              const aData = await aRes.json();
-              const stats = aData.athlete?.statsSummary?.statistics || [];
-
-              const ptsStat = stats.find((s: any) => s.abbreviation === 'PTS' || s.name === 'avgPoints');
-              const rebStat = stats.find((s: any) => s.abbreviation === 'REB' || s.name === 'avgRebounds');
-              const astStat = stats.find((s: any) => s.abbreviation === 'AST' || s.name === 'avgAssists');
-
-              if (ptsStat && ptsStat.displayValue) pts = parseFloat(ptsStat.displayValue) || pts;
-              if (rebStat && rebStat.displayValue) reb = parseFloat(rebStat.displayValue) || reb;
-              if (astStat && astStat.displayValue) ast = parseFloat(astStat.displayValue) || ast;
+            const coreRes = await fetch(`https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2026/types/2/athletes/${a.id}/statistics`);
+            if (coreRes.ok) {
+              const coreData = await coreRes.json();
+              const statsMap: Record<string, number> = {};
+              for (const cat of coreData.splits?.categories || []) {
+                for (const s of cat.stats || []) {
+                  if (s.name) statsMap[s.name] = s.value !== undefined ? s.value : parseFloat(s.displayValue) || 0;
+                }
+              }
+              if (statsMap['avgPoints'] !== undefined) {
+                pts = Math.round(statsMap['avgPoints'] * 10) / 10;
+                reb = Math.round((statsMap['avgRebounds'] ?? 0) * 10) / 10;
+                ast = Math.round((statsMap['avgAssists'] ?? 0) * 10) / 10;
+                stl = Math.round((statsMap['avgSteals'] ?? 0) * 10) / 10;
+                blk = Math.round((statsMap['avgBlocks'] ?? 0) * 10) / 10;
+                to = Math.round((statsMap['avgTurnovers'] ?? 0) * 10) / 10;
+                fg3m = Math.round((statsMap['avgThreePointFieldGoalsMade'] ?? 0) * 10) / 10;
+                hasStats = true;
+              }
             }
           } catch (statErr) {
-            // Fallback default
+            // Fallback
+          }
+
+          // 2. Fallback to ESPN overview endpoint
+          if (!hasStats) {
+            try {
+              const overRes = await fetch(`https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/${a.id}/overview`);
+              if (overRes.ok) {
+                const overData = await overRes.json();
+                const labels: string[] = overData.statistics?.labels || [];
+                const rawStats: string[] = overData.statistics?.splits?.[0]?.stats || [];
+                const map: Record<string, number> = {};
+                labels.forEach((l, idx) => { map[l] = parseFloat(rawStats[idx]) || 0; });
+                if (map['PTS'] !== undefined) {
+                  pts = map['PTS'];
+                  reb = map['REB'] ?? 0;
+                  ast = map['AST'] ?? 0;
+                  stl = map['STL'] ?? 0;
+                  blk = map['BLK'] ?? 0;
+                  to = map['TO'] ?? 0;
+                  const fg3Pct = (map['3P%'] ?? 30) / 100;
+                  fg3m = Math.round(Math.min(pts / 3, pts * 0.25 * fg3Pct) * 10) / 10;
+                  hasStats = true;
+                }
+              }
+            } catch (err) {}
+          }
+
+          // 3. Fallback to previous season statistics
+          if (!hasStats || pts === 0) {
+            try {
+              const prevRes = await fetch(`https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2025/types/2/athletes/${a.id}/statistics`);
+              if (prevRes.ok) {
+                const prevData = await prevRes.json();
+                const statsMap: Record<string, number> = {};
+                for (const cat of prevData.splits?.categories || []) {
+                  for (const s of cat.stats || []) {
+                    if (s.name) statsMap[s.name] = s.value !== undefined ? s.value : parseFloat(s.displayValue) || 0;
+                  }
+                }
+                if (statsMap['avgPoints'] !== undefined) {
+                  pts = Math.round(statsMap['avgPoints'] * 10) / 10;
+                  reb = Math.round((statsMap['avgRebounds'] ?? 0) * 10) / 10;
+                  ast = Math.round((statsMap['avgAssists'] ?? 0) * 10) / 10;
+                  stl = Math.round((statsMap['avgSteals'] ?? 0) * 10) / 10;
+                  blk = Math.round((statsMap['avgBlocks'] ?? 0) * 10) / 10;
+                  to = Math.round((statsMap['avgTurnovers'] ?? 0) * 10) / 10;
+                  fg3m = Math.round((statsMap['avgThreePointFieldGoalsMade'] ?? 0) * 10) / 10;
+                  hasStats = true;
+                }
+              }
+            } catch (err) {}
           }
 
           let position: 'PG' | 'SG' | 'SF' | 'PF' | 'C' = 'PG';
@@ -156,23 +226,7 @@ async function syncRealNbaData(): Promise<{ syncedPlayersCount: number; syncedGa
           else if (a.posAbbr.includes('G')) position = ast > reb ? 'PG' : 'SG';
           else if (a.posAbbr.includes('F')) position = reb > 6.0 ? 'PF' : 'SF';
 
-          // Positional realistic complementary stats
-          if (position === 'C' || position === 'PF') {
-            blk = Math.round((0.8 + (reb / 10) * 1.2) * 10) / 10;
-            stl = Math.round((0.5 + Math.random() * 0.5) * 10) / 10;
-            fg3m = Math.round((0.3 + Math.random() * 0.8) * 10) / 10;
-          } else if (position === 'PG' || position === 'SG') {
-            stl = Math.round((0.8 + (ast / 8) * 1.1) * 10) / 10;
-            blk = Math.round((0.2 + Math.random() * 0.4) * 10) / 10;
-            fg3m = Math.round((1.5 + (pts / 15) * 1.2) * 10) / 10;
-          } else {
-            stl = Math.round((0.7 + Math.random() * 0.7) * 10) / 10;
-            blk = Math.round((0.4 + Math.random() * 0.6) * 10) / 10;
-            fg3m = Math.round((1.0 + Math.random() * 1.2) * 10) / 10;
-          }
-          to = Math.round((1.0 + (pts / 18) * 1.5) * 10) / 10;
-
-          // Official fantasy average formula
+          // Official fantasy average formula from ESPN stats
           const fantasyAvg = Math.round((pts * 1.0 + reb * 1.2 + ast * 1.5 + stl * 3.0 + blk * 3.0 + fg3m * 1.0 - to * 1.0) * 10) / 10;
 
           return {
@@ -192,35 +246,35 @@ async function syncRealNbaData(): Promise<{ syncedPlayersCount: number; syncedGa
     }
 
     if (fetchedPlayers.length > 0) {
-      // Merge fetched stats into INITIAL_NBA_PLAYERS ground truth to prevent scrambling team assignments
+      // Merge fetched ESPN stats into INITIAL_NBA_PLAYERS ground truth
       const mergedList: Player[] = INITIAL_NBA_PLAYERS.map((base) => {
-        const baseNorm = base.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const baseNorm = base.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
         const match = fetchedPlayers.find((fp) => {
-          const fpNorm = fp.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-          return fpNorm === baseNorm || fpNorm.includes(baseNorm) || baseNorm.includes(fpNorm);
+          const fpNorm = fp.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          return fpNorm === baseNorm;
         });
 
         if (match) {
-          return {
+          return enforceAuthenticTeam({
             ...base,
             team: match.team || base.team,
             teamName: match.teamName || base.teamName,
-            seasonStats: match.seasonStats || base.seasonStats,
-            avatarUrl: base.avatarUrl.includes('unsplash') && match.avatarUrl ? match.avatarUrl : base.avatarUrl,
-          };
+            avatarUrl: match.avatarUrl || base.avatarUrl,
+            seasonStats: match.seasonStats?.pts ? match.seasonStats : base.seasonStats,
+          });
         }
-        return base;
+        return enforceAuthenticTeam(base);
       });
 
       // Add any additional non-duplicate players from ESPN
       fetchedPlayers.forEach((fp) => {
         const fpNorm = fp.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         const exists = mergedList.some((m) => {
-          const mNorm = m.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-          return mNorm === fpNorm || mNorm.includes(fpNorm) || fpNorm.includes(mNorm);
+          const mNorm = m.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          return mNorm === fpNorm;
         });
         if (!exists && fp.seasonStats.fantasyAvg > 20) {
-          mergedList.push(fp);
+          mergedList.push(enforceAuthenticTeam(fp));
         }
       });
 
@@ -228,10 +282,10 @@ async function syncRealNbaData(): Promise<{ syncedPlayersCount: number; syncedGa
       mergedList.sort((a, b) => b.seasonStats.fantasyAvg - a.seasonStats.fantasyAvg);
       mergedList.forEach((p, idx) => {
         p.rank = idx + 1;
-        p.adp = Math.round((idx + 1 + Math.random() * 0.3) * 10) / 10;
+        p.adp = Math.round((idx + 1 + (idx % 3 === 0 ? 0.2 : idx % 3 === 1 ? -0.1 : 0.4)) * 10) / 10;
       });
 
-      playersList = mergedList;
+      playersList = mergedList.map(enforceAuthenticTeam);
       console.log(`✅ Loaded ${mergedList.length} verified current 2025-2026 NBA roster players.`);
     }
 
@@ -576,7 +630,7 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/players', (req, res) => {
-  res.json(playersList);
+  res.json(playersList.map(enforceAuthenticTeam));
 });
 
 // Trigger real live NBA sync endpoint
