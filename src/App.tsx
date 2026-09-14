@@ -47,6 +47,24 @@ export default function App() {
       }
     }
     init();
+
+    const handleDataUpdated = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail) {
+        if (detail.players) setPlayers(detail.players);
+        if (detail.games) setGames(detail.games);
+        if (detail.leagues && detail.leagues.length > 0) {
+          setLeague((prev) => {
+            const match = detail.leagues.find((l: any) => l.id === prev?.id);
+            return match || detail.leagues[0];
+          });
+        }
+      }
+    };
+    window.addEventListener('COURTVISION_DATA_UPDATED', handleDataUpdated);
+    return () => {
+      window.removeEventListener('COURTVISION_DATA_UPDATED', handleDataUpdated);
+    };
   }, []);
 
   // WebSocket Subscription
@@ -204,7 +222,7 @@ export default function App() {
         )}
 
         {activeTab === 'players' && (
-          <NbaPlayers players={players} games={games} />
+          <NbaPlayers players={players} games={games} onPlayersUpdated={(p) => setPlayers(p)} />
         )}
       </main>
 

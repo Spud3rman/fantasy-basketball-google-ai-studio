@@ -6,23 +6,31 @@ import { ApiService } from '../services/api';
 interface NbaPlayersProps {
   players: Player[];
   games: LiveGame[];
+  onPlayersUpdated?: (players: Player[]) => void;
 }
 
-export const NbaPlayers: React.FC<NbaPlayersProps> = ({ players, games }) => {
+export const NbaPlayers: React.FC<NbaPlayersProps> = ({ players, games, onPlayersUpdated }) => {
   const [search, setSearch] = React.useState('');
   const [posFilter, setPosFilter] = React.useState('ALL');
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [syncStatus, setSyncStatus] = React.useState<string | null>(null);
+  const [syncError, setSyncError] = React.useState<string | null>(null);
 
   const handleSyncRealData = async () => {
     setIsSyncing(true);
     setSyncStatus(null);
+    setSyncError(null);
     try {
       const res = await ApiService.syncRealNbaData();
       setSyncStatus(`Synced ${res.syncedPlayersCount} real players & ${res.syncedGamesCount} games!`);
-      setTimeout(() => setSyncStatus(null), 4000);
+      const updatedPlayers = await ApiService.getPlayers();
+      if (onPlayersUpdated) {
+        onPlayersUpdated(updatedPlayers);
+      }
+      setTimeout(() => setSyncStatus(null), 5000);
     } catch (err: any) {
-      alert('Failed to sync NBA data: ' + err.message);
+      setSyncError(err?.message || 'Failed to sync with ESPN API');
+      setTimeout(() => setSyncError(null), 6000);
     } finally {
       setIsSyncing(false);
     }
@@ -61,6 +69,11 @@ export const NbaPlayers: React.FC<NbaPlayersProps> = ({ players, games }) => {
             <p className="text-xs font-mono font-bold text-emerald-400 mt-1 flex items-center gap-1">
               <Check className="w-3.5 h-3.5" />
               <span>{syncStatus}</span>
+            </p>
+          )}
+          {syncError && (
+            <p className="text-xs font-mono font-bold text-rose-400 mt-1 flex items-center gap-1">
+              <span>⚠️ {syncError}</span>
             </p>
           )}
         </div>
