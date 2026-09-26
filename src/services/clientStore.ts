@@ -1,5 +1,53 @@
 import { INITIAL_NBA_PLAYERS, DEFAULT_SCORING_RULES, calculateFantasyPoints, enforceAuthenticTeam } from '../data/nbaPlayers';
-import { League, GroupMember, DraftPick, PlayByPlayAction, LiveGame, Player, ScoringRules } from '../types';
+import { League, GroupMember, DraftPick, PlayByPlayAction, LiveGame, Player, ScoringRules, CustomLeaderboard, CustomLeaderboardEntry, LeaderboardTrend } from '../types';
+import { SeasonService } from './seasonService';
+
+function getInitialInSeasonGames(): LiveGame[] {
+  return [
+    {
+      id: 'game-den-lal',
+      homeTeam: 'DEN',
+      awayTeam: 'LAL',
+      homeScore: 112,
+      awayScore: 106,
+      quarter: 4,
+      clock: '03:15',
+      status: 'live',
+      playerStats: {
+        p1: { playerId: 'p1', pts: 28, reb: 14, ast: 11, stl: 2, blk: 1, fg3m: 2, to: 3, fantasyPoints: 67.8 },
+        p2: { playerId: 'p2', pts: 32, reb: 8, ast: 9, stl: 1, blk: 0, fg3m: 4, to: 4, fantasyPoints: 58.1 },
+      },
+    },
+    {
+      id: 'game-bos-nyk',
+      homeTeam: 'BOS',
+      awayTeam: 'NYK',
+      homeScore: 104,
+      awayScore: 101,
+      quarter: 4,
+      clock: '05:40',
+      status: 'live',
+      playerStats: {
+        p5: { playerId: 'p5', pts: 27, reb: 8, ast: 5, stl: 2, blk: 1, fg3m: 3, to: 2, fantasyPoints: 49.6 },
+        p8: { playerId: 'p8', pts: 29, reb: 4, ast: 7, stl: 1, blk: 0, fg3m: 3, to: 3, fantasyPoints: 47.3 },
+      },
+    },
+    {
+      id: 'game-mil-phi',
+      homeTeam: 'MIL',
+      awayTeam: 'PHI',
+      homeScore: 98,
+      awayScore: 94,
+      quarter: 3,
+      clock: '02:10',
+      status: 'live',
+      playerStats: {
+        p3: { playerId: 'p3', pts: 31, reb: 12, ast: 6, stl: 1, blk: 2, fg3m: 0, to: 4, fantasyPoints: 59.4 },
+        p11: { playerId: 'p11', pts: 26, reb: 11, ast: 4, stl: 1, blk: 2, fg3m: 1, to: 3, fantasyPoints: 52.2 },
+      },
+    },
+  ];
+}
 
 const STORAGE_KEY_PLAYERS = 'cv_players';
 const STORAGE_KEY_LEAGUES = 'cv_leagues';
@@ -7,6 +55,8 @@ const STORAGE_KEY_GAMES = 'cv_games';
 const STORAGE_KEY_SIM_MODE = 'cv_sim_mode';
 const CURRENT_ROSTER_VERSION = 'cv_v8_espn_official_stats';
 const STORAGE_KEY_ROSTER_VERSION = 'cv_roster_version';
+const STORAGE_KEY_CUSTOM_LEADERBOARDS = 'cv_custom_leaderboards';
+const STORAGE_KEY_ACTIVE_LEADERBOARD_ID = 'cv_active_leaderboard_id';
 
 function createDefaultLeague(): League {
   const defaultMembers: GroupMember[] = [
@@ -117,16 +167,21 @@ export class ClientStore {
 
   // Games
   public static getGames(): LiveGame[] {
+    if (!SeasonService.isSeasonActive()) {
+      return [];
+    }
     try {
       const stored = localStorage.getItem(STORAGE_KEY_GAMES);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch (e) {
       console.warn('Error reading stored games:', e);
     }
-    return [];
+    const inSeason = getInitialInSeasonGames();
+    this.saveGames(inSeason);
+    return inSeason;
   }
 
   public static saveGames(games: LiveGame[]) {
@@ -487,7 +542,9 @@ export class ClientStore {
       console.warn('Direct ESPN scoreboard sync failed, using cached games:', e);
     }
 
-    if (fetchedGames.length === 0) {
+    if (!SeasonService.isSeasonActive()) {
+      fetchedGames = [];
+    } else if (fetchedGames.length === 0) {
       fetchedGames = this.getGames();
     }
 
@@ -587,5 +644,299 @@ export class ClientStore {
       syncedPlayersCount: currentPlayers.length,
       syncedGamesCount: fetchedGames.length,
     };
+  }
+
+  // ==========================================
+  // CUSTOM LEADERBOARDS
+  // ==========================================
+  public static getDefaultCustomLeaderboards(): CustomLeaderboard[] {
+    return [
+      {
+        id: 'board-power-rankings',
+        title: 'My Custom Power Rankings',
+        description: 'Custom weekly rankings, head-to-head tiers, and manager momentum',
+        category: 'Power Rankings',
+        metricLabel: 'Power Score (FP)',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        entries: [
+          {
+            id: 'entry-1',
+            name: 'Alex (You)',
+            subtitle: 'Downtown Daggers • 1st Place',
+            avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=80',
+            score: 382.4,
+            rank: 1,
+            trend: 'crown',
+            badge: '👑 #1 Contender',
+            notes: 'Dominant backcourt play, leading the league in assists and 3PM.',
+          },
+          {
+            id: 'entry-2',
+            name: 'Marcus',
+            subtitle: 'Rim Protectors • 2nd Place',
+            avatar: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&auto=format&fit=crop&q=80',
+            score: 364.8,
+            rank: 2,
+            trend: 'up',
+            badge: '🔥 On Fire',
+            notes: 'Elite rim protection and blocks anchoring the roster.',
+          },
+          {
+            id: 'entry-3',
+            name: 'Elena',
+            subtitle: 'Triple Double Trouble • 3rd Place',
+            avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
+            score: 341.2,
+            rank: 3,
+            trend: 'same',
+            badge: '⭐ Contender',
+            notes: 'Dangerous all-around scoring threat, always in striking distance.',
+          },
+          {
+            id: 'entry-4',
+            name: 'Jordan',
+            subtitle: 'Splash Brothers Fan • 4th Place',
+            avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80',
+            score: 319.5,
+            rank: 4,
+            trend: 'down',
+            badge: '🎯 Sleeper',
+            notes: 'Streaky three-point shooting, looking for a bounce-back week.',
+          },
+        ],
+      },
+      {
+        id: 'board-nba-mvp-ladder',
+        title: 'NBA MVP Ladder 2026',
+        description: 'Tracking the top individual superstars powered by authentic ESPN statistics',
+        category: 'NBA Superstars',
+        metricLabel: 'ESPN Fantasy Avg',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        entries: [
+          {
+            id: 'mvp-1',
+            name: 'Nikola Jokić',
+            subtitle: 'Denver Nuggets • C',
+            avatar: 'https://a.espncdn.com/combiner/i?img=/i/headshots/nba/players/full/3112335.png&w=350&h=254',
+            score: 58.4,
+            rank: 1,
+            trend: 'crown',
+            badge: 'MVP Frontrunner',
+            notes: 'Averaging triple-double territory with historic efficiency.',
+          },
+          {
+            id: 'mvp-2',
+            name: 'Luka Dončić',
+            subtitle: 'Dallas Mavericks • PG',
+            avatar: 'https://a.espncdn.com/combiner/i?img=/i/headshots/nba/players/full/3945274.png&w=350&h=254',
+            score: 55.7,
+            rank: 2,
+            trend: 'fire',
+            badge: 'Scoring Champ',
+            notes: 'Unstoppable step-backs and clutch fourth-quarter shot making.',
+          },
+          {
+            id: 'mvp-3',
+            name: 'Giannis Antetokounmpo',
+            subtitle: 'Milwaukee Bucks • PF',
+            avatar: 'https://a.espncdn.com/combiner/i?img=/i/headshots/nba/players/full/3032977.png&w=350&h=254',
+            score: 53.2,
+            rank: 3,
+            trend: 'up',
+            badge: 'Two-Way Beast',
+            notes: 'Dominating the paint on both offense and defense nightly.',
+          },
+          {
+            id: 'mvp-4',
+            name: 'Shai Gilgeous-Alexander',
+            subtitle: 'Oklahoma City Thunder • PG',
+            avatar: 'https://a.espncdn.com/combiner/i?img=/i/headshots/nba/players/full/4278073.png&w=350&h=254',
+            score: 51.9,
+            rank: 4,
+            trend: 'same',
+            badge: 'Clutch King',
+            notes: 'Leading OKC to the #1 seed with surgical mid-range shooting.',
+          },
+        ],
+      },
+    ];
+  }
+
+  public static getCustomLeaderboards(): CustomLeaderboard[] {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY_CUSTOM_LEADERBOARDS);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading custom leaderboards:', e);
+    }
+    const defaults = this.getDefaultCustomLeaderboards();
+    this.saveCustomLeaderboards(defaults);
+    return defaults;
+  }
+
+  public static saveCustomLeaderboards(boards: CustomLeaderboard[]): void {
+    try {
+      localStorage.setItem(STORAGE_KEY_CUSTOM_LEADERBOARDS, JSON.stringify(boards));
+      window.dispatchEvent(new CustomEvent('COURTVISION_LEADERBOARDS_UPDATED', { detail: boards }));
+    } catch (e) {
+      console.warn('Error saving custom leaderboards:', e);
+    }
+  }
+
+  public static getActiveLeaderboardId(): string {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY_ACTIVE_LEADERBOARD_ID);
+      if (stored) return stored;
+    } catch (e) {
+      // ignore
+    }
+    const boards = this.getCustomLeaderboards();
+    return boards[0]?.id || 'board-power-rankings';
+  }
+
+  public static setActiveLeaderboardId(id: string): void {
+    try {
+      localStorage.setItem(STORAGE_KEY_ACTIVE_LEADERBOARD_ID, id);
+      window.dispatchEvent(new CustomEvent('COURTVISION_ACTIVE_LEADERBOARD_CHANGED', { detail: id }));
+    } catch (e) {
+      console.warn('Error setting active leaderboard id:', e);
+    }
+  }
+
+  public static getActiveLeaderboard(): CustomLeaderboard {
+    const boards = this.getCustomLeaderboards();
+    const activeId = this.getActiveLeaderboardId();
+    const found = boards.find((b) => b.id === activeId);
+    return found || boards[0] || this.getDefaultCustomLeaderboards()[0];
+  }
+
+  public static createCustomLeaderboard(boardData: Partial<CustomLeaderboard>): CustomLeaderboard {
+    const boards = this.getCustomLeaderboards();
+    const newBoard: CustomLeaderboard = {
+      id: `board-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      title: boardData.title?.trim() || 'My Custom Leaderboard',
+      description: boardData.description?.trim() || 'Custom ranked leaderboard',
+      category: boardData.category?.trim() || 'Custom',
+      metricLabel: boardData.metricLabel?.trim() || 'Points',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      entries: boardData.entries || [],
+    };
+    const updated = [newBoard, ...boards];
+    this.saveCustomLeaderboards(updated);
+    this.setActiveLeaderboardId(newBoard.id);
+    return newBoard;
+  }
+
+  public static updateCustomLeaderboard(id: string, updates: Partial<CustomLeaderboard>): CustomLeaderboard | null {
+    const boards = this.getCustomLeaderboards();
+    const idx = boards.findIndex((b) => b.id === id);
+    if (idx === -1) return null;
+    boards[idx] = {
+      ...boards[idx],
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    this.saveCustomLeaderboards(boards);
+    return boards[idx];
+  }
+
+  public static deleteCustomLeaderboard(id: string): CustomLeaderboard[] {
+    let boards = this.getCustomLeaderboards();
+    boards = boards.filter((b) => b.id !== id);
+    if (boards.length === 0) {
+      boards = this.getDefaultCustomLeaderboards();
+    }
+    this.saveCustomLeaderboards(boards);
+    this.setActiveLeaderboardId(boards[0].id);
+    return boards;
+  }
+
+  public static addEntryToLeaderboard(leaderboardId: string, entryData: Omit<CustomLeaderboardEntry, 'id'>): CustomLeaderboard | null {
+    const boards = this.getCustomLeaderboards();
+    const idx = boards.findIndex((b) => b.id === leaderboardId);
+    if (idx === -1) return null;
+
+    const board = boards[idx];
+    const newEntry: CustomLeaderboardEntry = {
+      id: `entry-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      ...entryData,
+      rank: entryData.rank || board.entries.length + 1,
+    };
+    board.entries.push(newEntry);
+    board.updatedAt = new Date().toISOString();
+    boards[idx] = board;
+    this.saveCustomLeaderboards(boards);
+    return board;
+  }
+
+  public static updateLeaderboardEntry(leaderboardId: string, entryId: string, updates: Partial<CustomLeaderboardEntry>): CustomLeaderboard | null {
+    const boards = this.getCustomLeaderboards();
+    const idx = boards.findIndex((b) => b.id === leaderboardId);
+    if (idx === -1) return null;
+
+    const board = boards[idx];
+    const entryIdx = board.entries.findIndex((e) => e.id === entryId);
+    if (entryIdx === -1) return null;
+
+    board.entries[entryIdx] = {
+      ...board.entries[entryIdx],
+      ...updates,
+    };
+    board.updatedAt = new Date().toISOString();
+    boards[idx] = board;
+    this.saveCustomLeaderboards(boards);
+    return board;
+  }
+
+  public static deleteLeaderboardEntry(leaderboardId: string, entryId: string): CustomLeaderboard | null {
+    const boards = this.getCustomLeaderboards();
+    const idx = boards.findIndex((b) => b.id === leaderboardId);
+    if (idx === -1) return null;
+
+    const board = boards[idx];
+    board.entries = board.entries.filter((e) => e.id !== entryId);
+    // Recalculate ranks
+    board.entries.forEach((entry, i) => {
+      entry.rank = i + 1;
+    });
+    board.updatedAt = new Date().toISOString();
+    boards[idx] = board;
+    this.saveCustomLeaderboards(boards);
+    return board;
+  }
+
+  public static reorderLeaderboardEntries(leaderboardId: string, entryId: string, direction: 'up' | 'down'): CustomLeaderboard | null {
+    const boards = this.getCustomLeaderboards();
+    const idx = boards.findIndex((b) => b.id === leaderboardId);
+    if (idx === -1) return null;
+
+    const board = boards[idx];
+    const entryIdx = board.entries.findIndex((e) => e.id === entryId);
+    if (entryIdx === -1) return null;
+
+    const targetIdx = direction === 'up' ? entryIdx - 1 : entryIdx + 1;
+    if (targetIdx < 0 || targetIdx >= board.entries.length) return board;
+
+    const temp = board.entries[entryIdx];
+    board.entries[entryIdx] = board.entries[targetIdx];
+    board.entries[targetIdx] = temp;
+
+    // Recalculate ranks to match new order
+    board.entries.forEach((e, i) => {
+      e.rank = i + 1;
+    });
+
+    board.updatedAt = new Date().toISOString();
+    boards[idx] = board;
+    this.saveCustomLeaderboards(boards);
+    return board;
   }
 }

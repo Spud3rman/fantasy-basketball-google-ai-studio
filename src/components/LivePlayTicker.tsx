@@ -1,6 +1,7 @@
 import React from 'react';
 import { Radio, Flame, Sparkles, TrendingUp } from 'lucide-react';
 import { PlayByPlayAction } from '../types';
+import { SeasonService } from '../services/seasonService';
 
 interface LivePlayTickerProps {
   playHistory: PlayByPlayAction[];
@@ -8,24 +9,23 @@ interface LivePlayTickerProps {
 }
 
 export const LivePlayTicker: React.FC<LivePlayTickerProps> = ({ playHistory, activeMemberId }) => {
-  const latestPlay = playHistory[0];
+  const [isSeasonActive, setIsSeasonActive] = React.useState<boolean>(() => SeasonService.isSeasonActive());
+
+  React.useEffect(() => {
+    return SeasonService.onSeasonChange((info) => {
+      setIsSeasonActive(info.isSeasonActive);
+    });
+  }, []);
+
+  // Suppress scoring play ticker during offseason until season starts
+  if (!isSeasonActive) {
+    return null;
+  }
+
+  const latestPlay = playHistory?.[0];
 
   if (!latestPlay) {
-    return (
-      <div className="bg-black border-b border-white/10 py-2.5 px-4 text-xs text-white/70 flex flex-wrap items-center justify-between font-mono gap-2">
-        <div className="flex items-center gap-3">
-          <div className="bg-orange-500 text-black px-2 py-0.5 font-black italic -skew-x-12 text-[10px] uppercase">
-            NBA OFFSEASON
-          </div>
-          <span className="text-white/80 font-semibold uppercase tracking-wider text-[11px]">
-            No live games today • Season starts October 2026 • Official ESPN player stats active
-          </span>
-        </div>
-        <div className="text-[10px] text-white/40 uppercase tracking-widest hidden sm:block">
-          DRAFT ROOM & ROSTERS READY
-        </div>
-      </div>
-    );
+    return null;
   }
 
   const isUserAffected = latestPlay.affectedGroupMembers.some((m) => m.memberId === activeMemberId);

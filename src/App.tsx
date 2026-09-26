@@ -10,6 +10,8 @@ import { ScoringRulesModal } from './components/ScoringRulesModal';
 import { UserSwitcherModal } from './components/UserSwitcherModal';
 import { LeagueModal } from './components/LeagueModal';
 import { ApiService } from './services/api';
+import { ClientStore } from './services/clientStore';
+import { SeasonService } from './services/seasonService';
 import { League, GroupMember, LiveGame, PlayByPlayAction, Player, ScoringRules } from './types';
 
 export default function App() {
@@ -35,6 +37,13 @@ export default function App() {
         const pList = await ApiService.getPlayers();
         setPlayers(pList);
 
+        if (SeasonService.isSeasonActive()) {
+          setGames(ClientStore.getGames());
+        } else {
+          setGames([]);
+          setPlayHistory([]);
+        }
+
         const lList = await ApiService.getLeagues();
         if (lList && lList.length > 0) {
           setLeague(lList[0]);
@@ -52,7 +61,13 @@ export default function App() {
       const detail = (e as CustomEvent).detail;
       if (detail) {
         if (detail.players) setPlayers(detail.players);
-        if (detail.games) setGames(detail.games);
+        if (detail.games) {
+          if (SeasonService.isSeasonActive()) {
+            setGames(detail.games);
+          } else {
+            setGames([]);
+          }
+        }
         if (detail.leagues && detail.leagues.length > 0) {
           setLeague((prev) => {
             const match = detail.leagues.find((l: any) => l.id === prev?.id);
@@ -61,9 +76,22 @@ export default function App() {
         }
       }
     };
+
+    const handleSeasonChanged = () => {
+      if (SeasonService.isSeasonActive()) {
+        const inSeasonGames = ClientStore.getGames();
+        setGames(inSeasonGames);
+      } else {
+        setGames([]);
+        setPlayHistory([]);
+      }
+    };
+
     window.addEventListener('COURTVISION_DATA_UPDATED', handleDataUpdated);
+    window.addEventListener('COURTVISION_SEASON_CHANGED', handleSeasonChanged);
     return () => {
       window.removeEventListener('COURTVISION_DATA_UPDATED', handleDataUpdated);
+      window.removeEventListener('COURTVISION_SEASON_CHANGED', handleSeasonChanged);
     };
   }, []);
 
@@ -74,8 +102,13 @@ export default function App() {
     const unsubscribe = ApiService.connectWs(league.id, activeMemberId, (msg) => {
       if (msg.type === 'INIT_STATE') {
         if (msg.payload.league) setLeague(msg.payload.league);
-        if (msg.payload.games) setGames(msg.payload.games);
-        if (msg.payload.playHistory) setPlayHistory(msg.payload.playHistory);
+        if (SeasonService.isSeasonActive()) {
+          if (msg.payload.games) setGames(msg.payload.games);
+          if (msg.payload.playHistory) setPlayHistory(msg.payload.playHistory);
+        } else {
+          setGames([]);
+          setPlayHistory([]);
+        }
         if (msg.payload.simMode) setSimMode(msg.payload.simMode);
         if (msg.payload.players) setPlayers(msg.payload.players);
       } else if (msg.type === 'LEAGUE_UPDATED') {
@@ -85,6 +118,7 @@ export default function App() {
       } else if (msg.type === 'DRAFT_PICKED') {
         setLeague(msg.payload.league);
       } else if (msg.type === 'PLAY_ACTION') {
+        if (!SeasonService.isSeasonActive()) return;
         const { action, games: updatedGames, leagues: updatedLeagues } = msg.payload;
         if (action) {
           setPlayHistory((prev) => [action, ...prev].slice(0, 50));
@@ -217,6 +251,7 @@ export default function App() {
           <Leaderboard
             league={league}
             activeMember={activeMember}
+            players={players}
             onUpdateMemberName={handleUpdateMemberName}
           />
         )}

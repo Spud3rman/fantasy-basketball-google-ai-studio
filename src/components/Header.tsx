@@ -13,8 +13,11 @@ import {
   Check,
   UserCheck,
   Radio,
+  Calendar,
+  ChevronDown,
 } from 'lucide-react';
 import { League, GroupMember } from '../types';
+import { SeasonService, SeasonInfo } from '../services/seasonService';
 
 interface HeaderProps {
   activeTab: string;
@@ -40,6 +43,13 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenScoringModal,
 }) => {
   const [copied, setCopied] = React.useState(false);
+  const [seasonInfo, setSeasonInfo] = React.useState<SeasonInfo>(() => SeasonService.getSeasonInfo());
+
+  React.useEffect(() => {
+    return SeasonService.onSeasonChange((info) => {
+      setSeasonInfo(info);
+    });
+  }, []);
 
   const handleCopyCode = () => {
     if (league?.code) {
@@ -82,44 +92,80 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* Right Action Tools: Simulation Speed, User Identity, League Switch */}
+        {/* Right Action Tools: Season Status / Simulation Speed, User Identity, League Switch */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Live Simulator Speed Controls */}
-          <div className="flex items-center bg-white/5 rounded-none p-0.5 border border-white/10 text-xs">
-            <button
-              onClick={() => onSimControl('live')}
-              className={`px-2.5 py-1 flex items-center gap-1.5 transition-all font-display text-xs font-bold uppercase tracking-wider ${
-                simMode === 'live'
-                  ? 'bg-emerald-500 text-black font-black'
-                  : 'text-white/60 hover:text-white'
-              }`}
-            >
-              <Radio className="w-3 h-3 animate-pulse" />
-              <span>LIVE</span>
-            </button>
-            <button
-              onClick={() => onSimControl('fast')}
-              className={`px-2.5 py-1 flex items-center gap-1.5 transition-all font-display text-xs font-bold uppercase tracking-wider ${
-                simMode === 'fast'
-                  ? 'bg-orange-500 text-black font-black'
-                  : 'text-white/60 hover:text-white'
-              }`}
-            >
-              <Zap className="w-3 h-3" />
-              <span>5X FAST</span>
-            </button>
-            <button
-              onClick={() => onSimControl('pause')}
-              className={`px-2.5 py-1 flex items-center gap-1.5 transition-all font-display text-xs font-bold uppercase tracking-wider ${
-                simMode === 'pause'
-                  ? 'bg-rose-600 text-white font-black'
-                  : 'text-white/60 hover:text-white'
-              }`}
-            >
-              <Pause className="w-3 h-3" />
-              <span>PAUSE</span>
-            </button>
-          </div>
+          {!seasonInfo.isSeasonActive ? (
+            /* Offseason Status & Season Mode Switcher */
+            <div className="flex items-center gap-1.5 bg-white/5 border border-white/10 px-2.5 py-1 text-xs">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              <span className="font-mono text-[10px] uppercase font-bold text-white/70 tracking-wider hidden sm:inline">
+                OFFSEASON • TIPOFF OCT 20
+              </span>
+              <span className="font-mono text-[10px] uppercase font-bold text-white/70 tracking-wider sm:hidden">
+                OFFSEASON
+              </span>
+              <button
+                onClick={() => SeasonService.setSeasonMode('in_season')}
+                title="Test season mode: activates live NBA games and scoring plays immediately"
+                className="text-[9px] font-display font-black uppercase tracking-wider bg-orange-500/20 hover:bg-orange-500 text-orange-400 hover:text-black px-2 py-0.5 border border-orange-500/30 transition-all -skew-x-6 ml-1"
+              >
+                Test In-Season
+              </button>
+            </div>
+          ) : (
+            /* In-Season Active Badge & Live Simulator Speed Controls */
+            <div className="flex items-center gap-2">
+              <div className="hidden lg:flex items-center gap-1.5 bg-emerald-950/60 border border-emerald-500/40 px-2 py-1 text-[10px] font-mono font-bold text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                <span>IN-SEASON</span>
+                {seasonInfo.mode === 'in_season' && (
+                  <button
+                    onClick={() => SeasonService.setSeasonMode('auto')}
+                    title="Reset to official calendar date (offseason until Oct 20)"
+                    className="text-white/40 hover:text-white underline ml-1 text-[9px] uppercase font-normal"
+                  >
+                    (Reset)
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center bg-white/5 rounded-none p-0.5 border border-white/10 text-xs">
+                <button
+                  onClick={() => onSimControl('live')}
+                  className={`px-2.5 py-1 flex items-center gap-1.5 transition-all font-display text-xs font-bold uppercase tracking-wider ${
+                    simMode === 'live'
+                      ? 'bg-emerald-500 text-black font-black'
+                      : 'text-white/60 hover:text-white'
+                  }`}
+                >
+                  <Radio className="w-3 h-3 animate-pulse" />
+                  <span>LIVE</span>
+                </button>
+                <button
+                  onClick={() => onSimControl('fast')}
+                  className={`px-2.5 py-1 flex items-center gap-1.5 transition-all font-display text-xs font-bold uppercase tracking-wider ${
+                    simMode === 'fast'
+                      ? 'bg-orange-500 text-black font-black'
+                      : 'text-white/60 hover:text-white'
+                  }`}
+                >
+                  <Zap className="w-3 h-3" />
+                  <span>5X FAST</span>
+                </button>
+                <button
+                  onClick={() => onSimControl('pause')}
+                  className={`px-2.5 py-1 flex items-center gap-1.5 transition-all font-display text-xs font-bold uppercase tracking-wider ${
+                    simMode === 'pause'
+                      ? 'bg-rose-600 text-white font-black'
+                      : 'text-white/60 hover:text-white'
+                  }`}
+                >
+                  <Pause className="w-3 h-3" />
+                  <span>PAUSE</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* User Selector Button */}
           <button
@@ -188,13 +234,16 @@ export const Header: React.FC<HeaderProps> = ({
 
         <button
           onClick={() => setActiveTab('leaderboard')}
-          className={`font-display text-xs font-bold uppercase tracking-widest transition-all pb-1 ${
+          className={`font-display text-xs font-bold uppercase tracking-widest transition-all pb-1 flex items-center gap-1.5 ${
             activeTab === 'leaderboard'
               ? 'border-b-2 border-orange-500 text-white'
               : 'opacity-50 hover:opacity-100 text-white'
           }`}
         >
-          Leaderboard
+          <span>Custom Leaderboard</span>
+          <span className="px-1 py-0.2 text-[9px] bg-white/10 text-orange-400 font-mono font-bold rounded">
+            CUSTOM
+          </span>
         </button>
 
         <button

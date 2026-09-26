@@ -155,3 +155,29 @@ export interface ChatMessage {
   timestamp: string;
   isSystem?: boolean;
 }
+
+export type LeaderboardTrend = 'up' | 'down' | 'same' | 'fire' | 'crown' | 'cold';
+
+export interface CustomLeaderboardEntry {
+  id: string;
+  name: string;
+  subtitle: string;
+  avatar: string;
+  score: number;
+  scoreLabel?: string;
+  rank: number;
+  trend: LeaderboardTrend;
+  badge?: string;
+  notes?: string;
+}
+
+export interface CustomLeaderboard {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  metricLabel: string;
+  createdAt: string;
+  updatedAt: string;
+  entries: CustomLeaderboardEntry[];
+}

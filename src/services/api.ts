@@ -1,5 +1,6 @@
-import { League, LiveGame, PlayByPlayAction, Player, ScoringRules, ChatMessage } from '../types';
+import { League, LiveGame, PlayByPlayAction, Player, ScoringRules, ChatMessage, CustomLeaderboard, CustomLeaderboardEntry } from '../types';
 import { ClientStore } from './clientStore';
+import { SeasonService } from './seasonService';
 
 async function safeApiCall<T>(
   url: string,
@@ -301,6 +302,9 @@ export class ApiService {
       // If WS is actively connected, let WS drive
       if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
 
+      // When in offseason, do NOT generate scoring plays until the season starts
+      if (!SeasonService.isSeasonActive()) return;
+
       const players = ClientStore.getPlayers();
       const games = ClientStore.getGames();
       const league = ClientStore.getLeague(leagueId);
@@ -375,5 +379,50 @@ export class ApiService {
         })
       );
     }
+  }
+
+  // Custom Leaderboards
+  public static getCustomLeaderboards(): CustomLeaderboard[] {
+    return ClientStore.getCustomLeaderboards();
+  }
+
+  public static getActiveLeaderboard(): CustomLeaderboard {
+    return ClientStore.getActiveLeaderboard();
+  }
+
+  public static getActiveLeaderboardId(): string {
+    return ClientStore.getActiveLeaderboardId();
+  }
+
+  public static setActiveLeaderboardId(id: string): void {
+    ClientStore.setActiveLeaderboardId(id);
+  }
+
+  public static createCustomLeaderboard(boardData: Partial<CustomLeaderboard>): CustomLeaderboard {
+    return ClientStore.createCustomLeaderboard(boardData);
+  }
+
+  public static updateCustomLeaderboard(id: string, updates: Partial<CustomLeaderboard>): CustomLeaderboard | null {
+    return ClientStore.updateCustomLeaderboard(id, updates);
+  }
+
+  public static deleteCustomLeaderboard(id: string): CustomLeaderboard[] {
+    return ClientStore.deleteCustomLeaderboard(id);
+  }
+
+  public static addEntryToLeaderboard(leaderboardId: string, entryData: Omit<CustomLeaderboardEntry, 'id'>): CustomLeaderboard | null {
+    return ClientStore.addEntryToLeaderboard(leaderboardId, entryData);
+  }
+
+  public static updateLeaderboardEntry(leaderboardId: string, entryId: string, updates: Partial<CustomLeaderboardEntry>): CustomLeaderboard | null {
+    return ClientStore.updateLeaderboardEntry(leaderboardId, entryId, updates);
+  }
+
+  public static deleteLeaderboardEntry(leaderboardId: string, entryId: string): CustomLeaderboard | null {
+    return ClientStore.deleteLeaderboardEntry(leaderboardId, entryId);
+  }
+
+  public static reorderLeaderboardEntries(leaderboardId: string, entryId: string, direction: 'up' | 'down'): CustomLeaderboard | null {
+    return ClientStore.reorderLeaderboardEntries(leaderboardId, entryId, direction);
   }
 }
