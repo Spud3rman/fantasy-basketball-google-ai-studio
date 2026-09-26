@@ -58,6 +58,16 @@ const STORAGE_KEY_ROSTER_VERSION = 'cv_roster_version';
 const STORAGE_KEY_CUSTOM_LEADERBOARDS = 'cv_custom_leaderboards';
 const STORAGE_KEY_ACTIVE_LEADERBOARD_ID = 'cv_active_leaderboard_id';
 
+export function cleanLeagueCode(input: string | undefined | null): string {
+  if (!input) return '';
+  return input
+    .toString()
+    .toUpperCase()
+    .replace(/^CODE\s*[:#-]?\s*/i, '')
+    .replace(/[#\s\-_]/g, '')
+    .trim();
+}
+
 function createDefaultLeague(): League {
   const defaultMembers: GroupMember[] = [
     {
@@ -72,7 +82,7 @@ function createDefaultLeague(): League {
     },
     {
       id: 'usr-2',
-      userName: 'Marcus',
+      userName: 'Marcus (CPU)',
       teamName: 'Rim Protectors',
       avatar: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&auto=format&fit=crop&q=80',
       isHost: false,
@@ -82,7 +92,7 @@ function createDefaultLeague(): League {
     },
     {
       id: 'usr-3',
-      userName: 'Elena',
+      userName: 'Elena (CPU)',
       teamName: 'Triple Double Trouble',
       avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
       isHost: false,
@@ -92,7 +102,7 @@ function createDefaultLeague(): League {
     },
     {
       id: 'usr-4',
-      userName: 'Jordan',
+      userName: 'Jordan (CPU)',
       teamName: 'Splash Brothers Fan',
       avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80',
       isHost: false,
@@ -104,8 +114,8 @@ function createDefaultLeague(): League {
 
   return {
     id: 'league-main',
-    name: 'CourtVision Elite Invitational',
-    code: 'SWOOSH77',
+    name: 'Swoosh Legends League',
+    code: 'SWOOSH1',
     maxTeams: 4,
     status: 'setup',
     currentWeek: 1,
@@ -473,26 +483,84 @@ export class ClientStore {
     return this.saveLeague(newLeague);
   }
 
-  public static joinLeague(data: { code: string; userName: string; teamName: string }): { league: League; member: GroupMember } {
+  public static joinLeague(data: {
+    code?: string;
+    userName: string;
+    teamName?: string;
+    avatar?: string;
+    leagueId?: string;
+  }): { league: League; member: GroupMember } {
     const leagues = this.getLeagues();
-    const league = leagues.find((l) => l.code.toUpperCase() === (data.code || '').toUpperCase().trim());
-    if (!league) throw new Error('League code not found');
-    if (league.members.length >= league.maxTeams) throw new Error('League is full');
+    const rawCode = (data.code || '').trim();
+    const normalized = cleanLeagueCode(rawCode);
+
+    let league = leagues.find((l) => {
+      const lCode = cleanLeagueCode(l.code);
+      const lId = cleanLeagueCode(l.id);
+      return (
+        (normalized && (lCode === normalized || lId === normalized)) ||
+        ((normalized === 'SWOOSH1' || normalized === 'SWOOSH77' || normalized === 'MAIN' || normalized === 'SWOOSH') &&
+          l.id === 'league-main') ||
+        (data.leagueId && l.id === data.leagueId)
+      );
+    });
+
+    if (!league) {
+      league = leagues.find((l) => l.id === 'league-main') || leagues[0];
+      if (!league || (!normalized.startsWith('SWOOSH') && normalized !== '')) {
+        throw new Error(`League code "${rawCode}" not found. Try default league code "SWOOSH1" or check with host.`);
+      }
+    }
 
     const newMember: GroupMember = {
-      id: 'usr-' + Date.now(),
-      userName: data.userName || 'New Player',
-      teamName: data.teamName || `${data.userName}'s Team`,
-      avatar: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&auto=format&fit=crop&q=80',
+      id: 'usr-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+      userName: (data.userName || 'New Player').trim(),
+      teamName: (data.teamName || `${data.userName || 'New Player'}'s Ballers`).trim(),
+      avatar:
+        data.avatar ||
+        'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&auto=format&fit=crop&q=80',
       isHost: false,
       roster: [],
       weeklyPoints: { 1: 0 },
       totalPoints: 0,
     };
 
-    league.members.push(newMember);
+    // Replace CPU member if at capacity or auto-expand
+    if (league.members.length >= league.maxTeams) {
+      const cpuIdx = league.members.findIndex(
+        (m) =>
+          !m.isHost &&
+          (m.userName.toLowerCase().includes('(cpu)') ||
+            m.id.startsWith('usr-cpu') ||
+            (m.id !== 'usr-1' && m.roster.length === 0 && (m.id === 'usr-2' || m.id === 'usr-3' || m.id === 'usr-4')))
+      );
+
+      if (cpuIdx >= 0) {
+        league.members[cpuIdx] = newMember;
+      } else if (league.maxTeams < 16) {
+        league.maxTeams += 1;
+        league.members.push(newMember);
+      } else {
+        throw new Error('League is full (maximum 16 teams reached)');
+      }
+    } else {
+      league.members.push(newMember);
+    }
+
     this.saveLeague(league);
     return { league, member: newMember };
+  }
+
+  public static addMemberToLeague(
+    leagueId: string,
+    data: { userName: string; teamName?: string; avatar?: string }
+  ): { league: League; member: GroupMember } {
+    return this.joinLeague({
+      leagueId,
+      userName: data.userName,
+      teamName: data.teamName,
+      avatar: data.avatar,
+    });
   }
 
   // DIRECT CLIENT-SIDE ESPN OFFICIAL SYNC

@@ -1,6 +1,7 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import fs from 'fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI } from '@google/genai';
 import { INITIAL_NBA_PLAYERS, DEFAULT_SCORING_RULES, calculateFantasyPoints, enforceAuthenticTeam } from './src/data/nbaPlayers.js';
@@ -370,7 +371,56 @@ async function syncRealNbaData(): Promise<{ syncedPlayersCount: number; syncedGa
 // Initial sync on boot
 syncRealNbaData();
 
-// Leagues DB
+// Leagues DB & Disk Persistence
+const DB_DIR = path.join(process.cwd(), 'data');
+const LEAGUES_FILE = path.join(DB_DIR, 'leagues.json');
+
+function ensureDbDir() {
+  try {
+    if (!fs.existsSync(DB_DIR)) {
+      fs.mkdirSync(DB_DIR, { recursive: true });
+    }
+  } catch (e) {
+    console.warn('Failed to ensure db dir:', e);
+  }
+}
+
+function persistLeaguesToDisk() {
+  try {
+    ensureDbDir();
+    fs.writeFileSync(LEAGUES_FILE, JSON.stringify(leagues, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn('Failed to persist leagues to disk:', e);
+  }
+}
+
+function loadLeaguesFromDisk(): Record<string, League> {
+  try {
+    if (fs.existsSync(LEAGUES_FILE)) {
+      const data = fs.readFileSync(LEAGUES_FILE, 'utf-8');
+      const parsed = JSON.parse(data);
+      if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+        console.log(`💾 Loaded ${Object.keys(parsed).length} persistent leagues from disk.`);
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load leagues from disk:', e);
+  }
+  return {};
+}
+
+// Clean and normalize league code for robust matching
+export function cleanLeagueCode(input: string | undefined | null): string {
+  if (!input) return '';
+  return input
+    .toString()
+    .toUpperCase()
+    .replace(/^CODE\s*[:#-]?\s*/i, '')
+    .replace(/[#\s\-_]/g, '')
+    .trim();
+}
+
 let leagues: Record<string, League> = {};
 
 // Helper to create default initial league
@@ -388,7 +438,7 @@ function createInitialLeague(): League {
     },
     {
       id: 'usr-2',
-      userName: 'Marcus',
+      userName: 'Marcus (CPU)',
       teamName: 'Rim Protectors',
       avatar: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&auto=format&fit=crop&q=80',
       isHost: false,
@@ -398,7 +448,7 @@ function createInitialLeague(): League {
     },
     {
       id: 'usr-3',
-      userName: 'Elena',
+      userName: 'Elena (CPU)',
       teamName: 'Triple Double Trouble',
       avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
       isHost: false,
@@ -408,7 +458,7 @@ function createInitialLeague(): League {
     },
     {
       id: 'usr-4',
-      userName: 'Jordan',
+      userName: 'Jordan (CPU)',
       teamName: 'Splash Brothers Fan',
       avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80',
       isHost: false,
@@ -441,7 +491,13 @@ function createInitialLeague(): League {
   };
 }
 
-leagues['league-main'] = createInitialLeague();
+// Initialize leagues from disk or fallback
+const loadedLeagues = loadLeaguesFromDisk();
+leagues = { ...loadedLeagues };
+if (!leagues['league-main']) {
+  leagues['league-main'] = createInitialLeague();
+  persistLeaguesToDisk();
+}
 
 // Simulation State - paused by default during offseason
 let simMode: 'live' | 'fast' | 'pause' = 'pause';
@@ -728,40 +784,160 @@ app.post('/api/leagues', (req, res) => {
   };
 
   leagues[id] = newLeague;
+  persistLeaguesToDisk();
   res.json(newLeague);
 });
 
-app.post('/api/leagues/join', (req, res) => {
-  const { code, userName, teamName } = req.body;
-  const league = Object.values(leagues).find((l) => l.code.toUpperCase() === (code || '').toUpperCase().trim());
-
-  if (!league) {
-    return res.status(404).json({ error: 'League code not found' });
-  }
-
-  if (league.members.length >= league.maxTeams) {
-    return res.status(400).json({ error: 'League is full' });
-  }
-
+// Helper for joining or adding a member into a league (handles CPU replacement and auto-expansion)
+function addOrReplaceMemberInLeague(
+  league: League,
+  userName: string,
+  teamName: string,
+  avatar?: string
+): GroupMember {
   const newMember: GroupMember = {
-    id: 'usr-' + Date.now(),
-    userName: userName || 'New Player',
-    teamName: teamName || `${userName}'s Team`,
-    avatar: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&auto=format&fit=crop&q=80',
+    id: 'usr-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+    userName: (userName || 'New Player').trim(),
+    teamName: (teamName || `${userName || 'New Player'}'s Ballers`).trim(),
+    avatar: avatar || 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&auto=format&fit=crop&q=80',
     isHost: false,
     roster: [],
     weeklyPoints: { 1: 0 },
     totalPoints: 0,
   };
 
-  league.members.push(newMember);
+  // If at capacity, check for CPU/placeholder member to replace
+  if (league.members.length >= league.maxTeams) {
+    const cpuIdx = league.members.findIndex(
+      (m) =>
+        !m.isHost &&
+        (m.userName.toLowerCase().includes('(cpu)') ||
+          m.id.startsWith('usr-cpu') ||
+          (m.id !== 'usr-1' && m.roster.length === 0 && (m.id === 'usr-2' || m.id === 'usr-3' || m.id === 'usr-4')))
+    );
 
-  broadcastToLeague(league.id, {
-    type: 'LEAGUE_UPDATED',
-    payload: league,
+    if (cpuIdx >= 0) {
+      league.members[cpuIdx] = newMember;
+    } else if (league.maxTeams < 16) {
+      league.maxTeams += 1;
+      league.members.push(newMember);
+    } else {
+      throw new Error('League is full (maximum 16 teams reached)');
+    }
+  } else {
+    league.members.push(newMember);
+  }
+
+  return newMember;
+}
+
+// Join league by code or ID
+app.post('/api/leagues/join', (req, res) => {
+  const { code, userName, teamName, avatar, leagueId, fallbackLeague } = req.body;
+  const rawCode = (code || '').trim();
+  const normalized = cleanLeagueCode(rawCode);
+
+  let league: League | undefined = undefined;
+
+  // 1. Try finding in current memory by code or id
+  league = Object.values(leagues).find((l) => {
+    const lCode = cleanLeagueCode(l.code);
+    const lId = cleanLeagueCode(l.id);
+    return (
+      (normalized && (lCode === normalized || lId === normalized)) ||
+      ((normalized === 'SWOOSH1' || normalized === 'SWOOSH77' || normalized === 'MAIN' || normalized === 'SWOOSH') &&
+        l.id === 'league-main') ||
+      (leagueId && l.id === leagueId)
+    );
   });
 
-  res.json({ league, member: newMember });
+  // 2. If not found in memory, reload from disk
+  if (!league) {
+    const fromDisk = loadLeaguesFromDisk();
+    leagues = { ...fromDisk, ...leagues };
+    league = Object.values(leagues).find((l) => {
+      const lCode = cleanLeagueCode(l.code);
+      const lId = cleanLeagueCode(l.id);
+      return (
+        (normalized && (lCode === normalized || lId === normalized)) ||
+        ((normalized === 'SWOOSH1' || normalized === 'SWOOSH77' || normalized === 'MAIN' || normalized === 'SWOOSH') &&
+          l.id === 'league-main') ||
+        (leagueId && l.id === leagueId)
+      );
+    });
+  }
+
+  // 3. If still not found, but fallbackLeague provided in payload, adopt it
+  if (!league && fallbackLeague && fallbackLeague.id) {
+    const fbCode = cleanLeagueCode(fallbackLeague.code);
+    if (!normalized || fbCode === normalized || fallbackLeague.id === leagueId || normalized === 'SWOOSH1') {
+      league = fallbackLeague;
+      leagues[league.id] = league;
+      persistLeaguesToDisk();
+    }
+  }
+
+  if (!league) {
+    const mainCode = leagues['league-main']?.code || 'SWOOSH1';
+    return res.status(404).json({
+      error: `League code "${rawCode}" not found. Try default league code "${mainCode}", or ask the host for the active code.`,
+    });
+  }
+
+  try {
+    const newMember = addOrReplaceMemberInLeague(league, userName, teamName, avatar);
+    persistLeaguesToDisk();
+
+    broadcastToLeague(league.id, {
+      type: 'LEAGUE_UPDATED',
+      payload: league,
+    });
+
+    return res.json({ league, member: newMember });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'League is full' });
+  }
+});
+
+// Directly add member to a league by league ID
+app.post('/api/leagues/:id/members', (req, res) => {
+  const { userName, teamName, avatar, fallbackLeague } = req.body;
+  let league = leagues[req.params.id];
+
+  if (!league) {
+    const normalized = cleanLeagueCode(req.params.id);
+    league = Object.values(leagues).find((l) => l.id === req.params.id || cleanLeagueCode(l.code) === normalized);
+  }
+
+  if (!league && fallbackLeague && fallbackLeague.id === req.params.id) {
+    league = fallbackLeague;
+    leagues[league.id] = league;
+    persistLeaguesToDisk();
+  }
+
+  if (!league) {
+    const fromDisk = loadLeaguesFromDisk();
+    leagues = { ...fromDisk, ...leagues };
+    league = leagues[req.params.id];
+  }
+
+  if (!league) {
+    return res.status(404).json({ error: 'League not found' });
+  }
+
+  try {
+    const newMember = addOrReplaceMemberInLeague(league, userName, teamName, avatar);
+    persistLeaguesToDisk();
+
+    broadcastToLeague(league.id, {
+      type: 'LEAGUE_UPDATED',
+      payload: league,
+    });
+
+    return res.json({ league, member: newMember });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Could not add member' });
+  }
 });
 
 // Update scoring rules
@@ -771,6 +947,7 @@ app.post('/api/leagues/:id/scoring', (req, res) => {
 
   league.scoringRules = { ...league.scoringRules, ...req.body.scoringRules };
   updateLeaguePoints(league.id);
+  persistLeaguesToDisk();
 
   broadcastToLeague(league.id, {
     type: 'LEAGUE_UPDATED',
@@ -792,6 +969,7 @@ app.post('/api/leagues/:id/draft/start', (req, res) => {
   league.draftState.currentPickIndex = 0;
   league.draftState.currentMemberId = league.members[0].id;
   league.draftState.timerActive = true;
+  persistLeaguesToDisk();
 
   broadcastToLeague(league.id, {
     type: 'LEAGUE_UPDATED',
@@ -812,6 +990,7 @@ app.post('/api/leagues/:id/draft/pick', (req, res) => {
   if ('error' in result) {
     return res.status(400).json({ error: result.error });
   }
+  persistLeaguesToDisk();
 
   broadcastToLeague(league.id, {
     type: 'DRAFT_PICKED',
@@ -842,6 +1021,7 @@ app.post('/api/leagues/:id/draft/sim-all', (req, res) => {
     const resPick = executeSinglePick(league, league.draftState.currentMemberId, 'AUTO');
     if ('error' in resPick) break;
   }
+  persistLeaguesToDisk();
 
   broadcastToLeague(league.id, {
     type: 'LEAGUE_UPDATED',
@@ -868,6 +1048,7 @@ app.post('/api/leagues/:id/draft/reset', (req, res) => {
     pickTimeSeconds: 45,
     timerActive: false,
   };
+  persistLeaguesToDisk();
 
   broadcastToLeague(league.id, {
     type: 'LEAGUE_UPDATED',
@@ -893,6 +1074,7 @@ app.post('/api/leagues/:id/roster/slot', (req, res) => {
   }
 
   updateLeaguePoints(league.id);
+  persistLeaguesToDisk();
 
   broadcastToLeague(league.id, {
     type: 'LEAGUE_UPDATED',
@@ -922,6 +1104,7 @@ app.post('/api/leagues/:id/member/update', (req, res) => {
       if (teamName) p.teamName = member.teamName;
     }
   });
+  persistLeaguesToDisk();
 
   broadcastToLeague(league.id, {
     type: 'LEAGUE_UPDATED',

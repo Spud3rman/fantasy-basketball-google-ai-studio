@@ -177,14 +177,21 @@ export default function App() {
   };
 
   const handleJoinLeagueByCode = async (data: { code: string; userName: string; teamName: string }) => {
-    const res = await ApiService.joinLeague(data);
+    const res = await ApiService.joinLeague({
+      ...data,
+      fallbackLeague: league || undefined,
+    });
     setLeague(res.league);
     setActiveMemberId(res.member.id);
   };
 
   const handleJoinMemberToCurrentLeague = async (userName: string, teamName: string) => {
     if (!league) return;
-    const res = await ApiService.joinLeague({ code: league.code, userName, teamName });
+    const res = await ApiService.addMemberToLeague(league.id, {
+      userName,
+      teamName,
+      fallbackLeague: league,
+    });
     setLeague(res.league);
     setActiveMemberId(res.member.id);
   };
@@ -284,8 +291,10 @@ export default function App() {
       <LeagueModal
         isOpen={isLeagueModalOpen}
         onClose={() => setIsLeagueModalOpen(false)}
+        league={league}
         onCreateLeague={handleCreateLeague}
         onJoinLeagueByCode={handleJoinLeagueByCode}
+        onAddMemberToCurrentLeague={handleJoinMemberToCurrentLeague}
       />
     </div>
   );

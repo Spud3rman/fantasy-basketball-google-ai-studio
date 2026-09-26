@@ -83,10 +83,17 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 onClick={handleCopyCode}
                 title="Copy League Join Code"
-                className="flex items-center gap-1 font-mono text-xs font-bold text-white/70 hover:text-orange-500 transition-colors uppercase tracking-wider"
+                className="flex items-center gap-1 font-mono text-xs font-bold text-white/70 hover:text-orange-500 transition-colors uppercase tracking-wider bg-white/5 px-1.5 py-0.5 border border-white/10"
               >
                 <span>CODE: {league.code}</span>
                 {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+              </button>
+              <button
+                onClick={onOpenLeagueModal}
+                title="Invite friend or add teammate to this league"
+                className="flex items-center gap-1 font-display text-[10px] font-black uppercase tracking-wider text-black bg-orange-500 hover:bg-orange-400 px-2 py-0.5 -skew-x-6 transition-all"
+              >
+                + Add / Invite
               </button>
             </div>
           )}

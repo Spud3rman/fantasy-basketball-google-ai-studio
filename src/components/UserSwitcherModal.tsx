@@ -62,13 +62,13 @@ export const UserSwitcherModal: React.FC<UserSwitcherModalProps> = ({
     if (!newUserName.trim()) return;
     setIsSubmitting(true);
     try {
-      await onJoinLeague(newUserName, newTeamName || `${newUserName}'s Ballers`);
+      await onJoinLeague(newUserName.trim(), newTeamName.trim() || `${newUserName.trim()}'s Squad`);
       setNewUserName('');
       setNewTeamName('');
       setIsAddingNew(false);
       onClose();
     } catch (e: any) {
-      alert(e.message || 'Error joining league');
+      alert(e.message || 'Error adding member to league');
     } finally {
       setIsSubmitting(false);
     }
@@ -234,7 +234,7 @@ export const UserSwitcherModal: React.FC<UserSwitcherModalProps> = ({
                 disabled={isSubmitting}
                 className="px-4 py-2 bg-orange-500 hover:bg-orange-400 text-black font-display font-black text-xs uppercase tracking-wider transition-all -skew-x-6"
               >
-                {isSubmitting ? 'JOINING...' : 'JOIN GROUP'}
+                {isSubmitting ? 'ADDING...' : 'ADD TO LEAGUE'}
               </button>
             </div>
           </form>

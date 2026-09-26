@@ -1,0 +1,82 @@
+{
+  "league-main": {
+    "id": "league-main",
+    "name": "Swoosh Legends League",
+    "code": "SWOOSH1",
+    "maxTeams": 4,
+    "status": "setup",
+    "currentWeek": 1,
+    "scoringRules": {
+      "pts": 1,
+      "reb": 1.2,
+      "ast": 1.5,
+      "stl": 3,
+      "blk": 3,
+      "fg3m": 1,
+      "to": -1,
+      "doubleDoubleBonus": 2,
+      "tripleDoubleBonus": 5
+    },
+    "draftState": {
+      "isStarted": false,
+      "isCompleted": false,
+      "currentRound": 1,
+      "currentPickIndex": 0,
+      "currentMemberId": "usr-1",
+      "pickHistory": [],
+      "pickTimeSeconds": 45,
+      "timerActive": false
+    },
+    "members": [
+      {
+        "id": "usr-1",
+        "userName": "Alex (You)",
+        "teamName": "Downtown Daggers",
+        "avatar": "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=80",
+        "isHost": true,
+        "roster": [],
+        "weeklyPoints": {
+          "1": 0
+        },
+        "totalPoints": 0
+      },
+      {
+        "id": "usr-2",
+        "userName": "Marcus (CPU)",
+        "teamName": "Rim Protectors",
+        "avatar": "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&auto=format&fit=crop&q=80",
+        "isHost": false,
+        "roster": [],
+        "weeklyPoints": {
+          "1": 0
+        },
+        "totalPoints": 0
+      },
+      {
+        "id": "usr-3",
+        "userName": "Elena (CPU)",
+        "teamName": "Triple Double Trouble",
+        "avatar": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80",
+        "isHost": false,
+        "roster": [],
+        "weeklyPoints": {
+          "1": 0
+        },
+        "totalPoints": 0
+      },
+      {
+        "id": "usr-4",
+        "userName": "Jordan (CPU)",
+        "teamName": "Splash Brothers Fan",
+        "avatar": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80",
+        "isHost": false,
+        "roster": [],
+        "weeklyPoints": {
+          "1": 0
+        },
+        "totalPoints": 0
+      }
+    ],
+    "createdAt": "2026-09-26T15:36:24.291Z"
+  }
+}

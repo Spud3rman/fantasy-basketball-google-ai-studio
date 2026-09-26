@@ -13,6 +13,16 @@ async function safeApiCall<T>(
     if (res.ok && contentType.includes('application/json')) {
       return await res.json();
     }
+    if (!res.ok && contentType.includes('application/json')) {
+      const errJson = await res.json().catch(() => null);
+      if (errJson && errJson.error) {
+        try {
+          return await fallback();
+        } catch (fbErr: any) {
+          throw new Error(errJson.error);
+        }
+      }
+    }
     // If backend returned non-JSON (like Vercel 404 HTML "The page could not be found..."), use client fallback
     console.warn(`API ${url} returned ${res.status} (${contentType}), switching to local/direct client fallback.`);
     return await fallback();
@@ -81,7 +91,7 @@ export class ApiService {
     teamName: string;
     maxTeams: number;
   }): Promise<League> {
-    return safeApiCall(
+    const newLeague = await safeApiCall(
       '/api/leagues',
       {
         method: 'POST',
@@ -90,14 +100,19 @@ export class ApiService {
       },
       () => ClientStore.createLeague(data)
     );
+    ClientStore.saveLeague(newLeague);
+    return newLeague;
   }
 
   public static async joinLeague(data: {
-    code: string;
+    code?: string;
     userName: string;
-    teamName: string;
+    teamName?: string;
+    avatar?: string;
+    leagueId?: string;
+    fallbackLeague?: League;
   }): Promise<{ league: League; member: any }> {
-    return safeApiCall(
+    const res = await safeApiCall(
       '/api/leagues/join',
       {
         method: 'POST',
@@ -106,6 +121,34 @@ export class ApiService {
       },
       () => ClientStore.joinLeague(data)
     );
+    if (res?.league) {
+      ClientStore.saveLeague(res.league);
+    }
+    return res;
+  }
+
+  public static async addMemberToLeague(
+    leagueId: string,
+    data: {
+      userName: string;
+      teamName?: string;
+      avatar?: string;
+      fallbackLeague?: League;
+    }
+  ): Promise<{ league: League; member: any }> {
+    const res = await safeApiCall(
+      `/api/leagues/${leagueId}/members`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      },
+      () => ClientStore.addMemberToLeague(leagueId, data)
+    );
+    if (res?.league) {
+      ClientStore.saveLeague(res.league);
+    }
+    return res;
   }
 
   public static async startDraft(leagueId: string): Promise<League> {
